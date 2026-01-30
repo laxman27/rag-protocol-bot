@@ -2,8 +2,9 @@ streamlit
 langchain
 langchain-community
 langchain-text-splitters
+langchain-groq
 numpy
 scikit-learn
 pypdf
-deep-translator
+sentence-transformers
 
