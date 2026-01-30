@@ -9,36 +9,40 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from sentence_transformers import SentenceTransformer
 
-# ---------- UI ----------
 st.set_page_config(page_title="Ask the Protocol", layout="wide")
 st.markdown("## 🏥 Healthcare Protocol Chatbot")
 st.info("For training & simulation only.")
 
-# ---------- LOAD & EMBED ----------
-if "ready" not in st.session_state:
+# ---------- SAFE LOADER ----------
+def build_store():
+    docs = []
+    for file in os.listdir("pdfs"):
+        if file.endswith(".pdf"):
+            loader = PyPDFLoader(f"pdfs/{file}")
+            docs.extend(loader.load())
+
+    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+    chunks = splitter.split_documents(docs)
+
+    embedder = SentenceTransformer("all-MiniLM-L6-v2")
+    vectors = embedder.encode([c.page_content for c in chunks])
+
+    st.session_state["chunks"] = chunks
+    st.session_state["vectors"] = vectors
+    st.session_state["embedder"] = embedder
+
+if not all(k in st.session_state for k in ("chunks", "vectors", "embedder")):
     with st.spinner("Loading protocol PDFs..."):
-        docs = []
-        for file in os.listdir("pdfs"):
-            if file.endswith(".pdf"):
-                loader = PyPDFLoader(f"pdfs/{file}")
-                docs.extend(loader.load())
-
-        splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
-        chunks = splitter.split_documents(docs)
-
-        embedder = SentenceTransformer("all-MiniLM-L6-v2")
-        vectors = embedder.encode([c.page_content for c in chunks])
-
-        st.session_state["chunks"] = chunks
-        st.session_state["vectors"] = vectors
-        st.session_state["embedder"] = embedder
-        st.session_state["ready"] = True
+        build_store()
 
 # ---------- RETRIEVER ----------
 def retrieve(query, k=4):
-    embedder = st.session_state["embedder"]
-    vectors = st.session_state["vectors"]
+    if not all(k in st.session_state for k in ("chunks", "vectors", "embedder")):
+        build_store()
+
     chunks = st.session_state["chunks"]
+    vectors = st.session_state["vectors"]
+    embedder = st.session_state["embedder"]
 
     q_vec = embedder.encode([query])
     sims = cosine_similarity(q_vec, vectors)[0]
