@@ -9,32 +9,41 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from sentence_transformers import SentenceTransformer
 
+# ---------- UI ----------
 st.set_page_config(page_title="Ask the Protocol", layout="wide")
 st.markdown("## 🏥 Healthcare Protocol Chatbot")
 st.info("For training & simulation only.")
 
-if "chunks" not in st.session_state:
-    docs = []
-    for file in os.listdir("pdfs"):
-        if file.endswith(".pdf"):
-            loader = PyPDFLoader(f"pdfs/{file}")
-            docs.extend(loader.load())
+# ---------- LOAD & EMBED ----------
+if "ready" not in st.session_state:
+    with st.spinner("Loading protocol PDFs..."):
+        docs = []
+        for file in os.listdir("pdfs"):
+            if file.endswith(".pdf"):
+                loader = PyPDFLoader(f"pdfs/{file}")
+                docs.extend(loader.load())
 
-    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
-    chunks = splitter.split_documents(docs)
+        splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+        chunks = splitter.split_documents(docs)
 
-    embedder = SentenceTransformer("all-MiniLM-L6-v2")
-    vectors = embedder.encode([c.page_content for c in chunks])
+        embedder = SentenceTransformer("all-MiniLM-L6-v2")
+        vectors = embedder.encode([c.page_content for c in chunks])
 
-    st.session_state.chunks = chunks
-    st.session_state.vectors = vectors
-    st.session_state.embedder = embedder
+        st.session_state["chunks"] = chunks
+        st.session_state["vectors"] = vectors
+        st.session_state["embedder"] = embedder
+        st.session_state["ready"] = True
 
+# ---------- RETRIEVER ----------
 def retrieve(query, k=4):
-    q_vec = st.session_state.embedder.encode([query])
-    sims = cosine_similarity(q_vec, st.session_state.vectors)[0]
+    embedder = st.session_state["embedder"]
+    vectors = st.session_state["vectors"]
+    chunks = st.session_state["chunks"]
+
+    q_vec = embedder.encode([query])
+    sims = cosine_similarity(q_vec, vectors)[0]
     top_idx = sims.argsort()[-k:][::-1]
-    return "\n\n".join([st.session_state.chunks[i].page_content for i in top_idx])
+    return "\n\n".join([chunks[i].page_content for i in top_idx])
 
 prompt = ChatPromptTemplate.from_template("""
 You are a medical training assistant.
@@ -54,6 +63,7 @@ rag_chain = (
     | llm
 )
 
+# ---------- CHAT ----------
 if "chat" not in st.session_state:
     st.session_state.chat = []
 
