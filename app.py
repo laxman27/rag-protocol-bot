@@ -1,42 +1,41 @@
 import os
 import streamlit as st
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.llms import Ollama
-from langchain_core.runnables import RunnablePassthrough
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnablePassthrough
 from deep_translator import GoogleTranslator
 
-# ---------- UI ----------
 st.set_page_config(page_title="Ask the Protocol", layout="wide")
-st.markdown("""
-<style>
-body { background-color:#0e1117; color:white; }
-</style>
-""", unsafe_allow_html=True)
-
 st.markdown("## 🏥 Healthcare Protocol Chatbot")
-st.info("For training & simulation only. Follow official hospital protocols.")
+st.info("For training & simulation only.")
 
-# ---------- LOAD RAG ----------
-if "db" not in st.session_state:
-    with st.spinner("Loading protocol PDFs..."):
-        docs = []
-        for file in os.listdir("pdfs"):
-            if file.endswith(".pdf"):
-                loader = PyPDFLoader(f"pdfs/{file}")
-                docs.extend(loader.load())
+if "chunks" not in st.session_state:
+    docs = []
+    for file in os.listdir("pdfs"):
+        if file.endswith(".pdf"):
+            loader = PyPDFLoader(f"pdfs/{file}")
+            docs.extend(loader.load())
 
-        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-        chunks = splitter.split_documents(docs)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+    chunks = splitter.split_documents(docs)
 
-        embeddings = OllamaEmbeddings(model="llama3")
-        db = Chroma.from_documents(chunks, embeddings, persist_directory="db")
-        st.session_state.db = db
+    embedder = OllamaEmbeddings(model="llama3")
+    vectors = np.array([embedder.embed_query(c.page_content) for c in chunks])
 
-retriever = st.session_state.db.as_retriever()
+    st.session_state.chunks = chunks
+    st.session_state.vectors = vectors
+    st.session_state.embedder = embedder
+
+def retrieve(query, k=4):
+    q_vec = st.session_state.embedder.embed_query(query)
+    sims = cosine_similarity([q_vec], st.session_state.vectors)[0]
+    top_idx = sims.argsort()[-k:][::-1]
+    return "\n\n".join([st.session_state.chunks[i].page_content for i in top_idx])
 
 prompt = ChatPromptTemplate.from_template("""
 You are a medical training assistant.
@@ -51,31 +50,21 @@ Question: {question}
 llm = Ollama(model="llama3")
 
 rag_chain = (
-    {"context": retriever, "question": RunnablePassthrough()}
+    {"context": lambda q: retrieve(q), "question": RunnablePassthrough()}
     | prompt
     | llm
 )
 
-# ---------- CHAT ----------
 if "chat" not in st.session_state:
     st.session_state.chat = []
 
 for role, msg in st.session_state.chat:
     st.markdown(f"**{role.upper()}:** {msg}")
 
-question = st.text_input("Ask your protocol:")
+q = st.text_input("Ask your protocol:")
 
-if st.button("Send") and question:
-    st.session_state.chat.append(("you", question))
-
-    user_lang = GoogleTranslator().detect(question)
-    if user_lang != "en":
-        question = GoogleTranslator(source='auto', target='en').translate(question)
-
-    answer = rag_chain.invoke(question)
-
-    if user_lang == "te":
-        answer = GoogleTranslator(source='en', target='te').translate(answer)
-
-    st.session_state.chat.append(("bot", str(answer)))
+if st.button("Send") and q:
+    ans = rag_chain.invoke(q)
+    st.session_state.chat.append(("you", q))
+    st.session_state.chat.append(("bot", str(ans)))
     st.rerun()
