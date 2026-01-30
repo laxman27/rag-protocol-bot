@@ -59,13 +59,13 @@ Context:
 Question: {question}
 """)
 
-llm = ChatGroq(model="llama3-8b-8192")
+llm = ChatGroq(model="llama3-8b-8192", temperature=0)
 
-rag_chain = (
-    {"context": lambda q: retrieve(q), "question": RunnablePassthrough()}
-    | prompt
-    | llm
-)
+# simple function instead of chain
+def ask_rag(question):
+    context = retrieve(question)
+    messages = prompt.format_messages(context=context, question=question)
+    return llm.invoke(messages)
 
 # ---------- CHAT ----------
 if "chat" not in st.session_state:
@@ -77,7 +77,7 @@ for role, msg in st.session_state.chat:
 q = st.text_input("Ask your protocol:")
 
 if st.button("Send") and q:
-    ans = rag_chain.invoke(q)
+    ans = ask_rag(q)
     st.session_state.chat.append(("you", q))
     st.session_state.chat.append(("bot", ans.content))
     st.rerun()
