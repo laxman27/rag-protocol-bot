@@ -2,8 +2,8 @@ streamlit
 langchain
 langchain-community
 langchain-text-splitters
-ollama
-deep-translator
 numpy
 scikit-learn
 pypdf
+deep-translator
+
