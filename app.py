@@ -2,72 +2,61 @@ import os
 import streamlit as st
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_groq import ChatGroq
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
+from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
+from groq import Groq
 
 st.set_page_config(page_title="Ask the Protocol", layout="wide")
 st.markdown("## 🏥 Healthcare Protocol Chatbot")
 st.info("For training & simulation only.")
 
-# ---------- SAFE LOADER ----------
-def build_store():
-    docs = []
+client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+
+# ---------- LOAD & EMBED ----------
+def load_docs():
+    texts = []
     for file in os.listdir("pdfs"):
         if file.endswith(".pdf"):
-            loader = PyPDFLoader(f"pdfs/{file}")
-            docs.extend(loader.load())
+            reader = PdfReader(f"pdfs/{file}")
+            for page in reader.pages:
+                texts.append(page.extract_text() or "")
+    return texts
 
-    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
-    chunks = splitter.split_documents(docs)
+if "texts" not in st.session_state:
+    with st.spinner("Indexing protocol PDFs..."):
+        texts = load_docs()
+        embedder = SentenceTransformer("all-MiniLM-L6-v2")
+        vectors = embedder.encode(texts)
 
-    embedder = SentenceTransformer("all-MiniLM-L6-v2")
-    vectors = embedder.encode([c.page_content for c in chunks])
-
-    st.session_state["chunks"] = chunks
-    st.session_state["vectors"] = vectors
-    st.session_state["embedder"] = embedder
-
-if not all(k in st.session_state for k in ("chunks", "vectors", "embedder")):
-    with st.spinner("Loading protocol PDFs..."):
-        build_store()
+        st.session_state["texts"] = texts
+        st.session_state["vectors"] = vectors
+        st.session_state["embedder"] = embedder
 
 # ---------- RETRIEVER ----------
 def retrieve(query, k=4):
-    if not all(k in st.session_state for k in ("chunks", "vectors", "embedder")):
-        build_store()
-
-    chunks = st.session_state["chunks"]
-    vectors = st.session_state["vectors"]
     embedder = st.session_state["embedder"]
+    vectors = st.session_state["vectors"]
+    texts = st.session_state["texts"]
 
     q_vec = embedder.encode([query])
     sims = cosine_similarity(q_vec, vectors)[0]
     top_idx = sims.argsort()[-k:][::-1]
-    return "\n\n".join([chunks[i].page_content for i in top_idx])
+    return "\n\n".join([texts[i] for i in top_idx])
 
-prompt = ChatPromptTemplate.from_template("""
-You are a medical training assistant.
-Answer ONLY from the context.
-
-Context:
-{context}
-
-Question: {question}
-""")
-
-llm = ChatGroq(model="llama3-8b-8192", temperature=0)
-
-# simple function instead of chain
+# ---------- GROQ CHAT ----------
 def ask_rag(question):
     context = retrieve(question)
-    messages = prompt.format_messages(context=context, question=question)
-    return llm.invoke(messages)
+    response = client.chat.completions.create(
+        model="llama3-8b-8192",
+        messages=[
+            {"role": "system", "content": "You are a medical training assistant. Answer only from the given context."},
+            {"role": "user", "content": f"Context:\n{context}\n\nQuestion:\n{question}"}
+        ],
+        temperature=0
+    )
+    return response.choices[0].message.content
 
-# ---------- CHAT ----------
+# ---------- CHAT UI ----------
 if "chat" not in st.session_state:
     st.session_state.chat = []
 
@@ -79,6 +68,5 @@ q = st.text_input("Ask your protocol:")
 if st.button("Send") and q:
     ans = ask_rag(q)
     st.session_state.chat.append(("you", q))
-    st.session_state.chat.append(("bot", ans.content))
+    st.session_state.chat.append(("bot", ans))
     st.rerun()
-
