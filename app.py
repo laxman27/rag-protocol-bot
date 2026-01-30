@@ -59,7 +59,7 @@ Context:
 Question: {question}
 """)
 
-llm = ChatGroq(model="llama3-70b-8192")
+llm = ChatGroq(model="llama3-8b-8192")
 
 rag_chain = (
     {"context": lambda q: retrieve(q), "question": RunnablePassthrough()}
@@ -81,3 +81,4 @@ if st.button("Send") and q:
     st.session_state.chat.append(("you", q))
     st.session_state.chat.append(("bot", ans.content))
     st.rerun()
+
